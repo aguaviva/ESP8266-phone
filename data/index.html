@@ -515,9 +515,9 @@
 
         var url = location.host;
 
-        function WebSocketTest(graph, audio)
+        function WebSocketTest(graph, audio) 
         {
-            if ("WebSocket" in window)
+            if ("WebSocket" in window) 
             {
                 this.time = performance.now();
                 Print("WebSocket is supported by your Browser!</br>");
@@ -525,25 +525,25 @@
                 // Let us open a web socket
                 var ws = new WebSocket("wss://" + url + "/wsesp8266/ws");
                 ws.binaryType = "arraybuffer"
-                ws.onopen = function()
+                ws.onopen = function() 
                 {
                     // Web Socket is connected, send data using send()
                     ws.send("Message to send");
                     Print("opened</br>");
                 };
 
-                ws.onmessage = function(evt)
+                ws.onmessage = function(evt) 
                 {
                     //ws.send(".");
-
+                    
                     var time = performance.now();
                     fps = (160 * 1000 / (time - this.time))
                     this.time = time;
 
                     var data = evt.data;
-                    if (data instanceof ArrayBuffer)
+                    if (data instanceof ArrayBuffer) 
                     {
-                        if (data.byteLength == 7)
+                        if (data.byteLength == 7) 
                         {
                             var buffer = []
                             var parmArray = new Uint8Array(data);
@@ -551,8 +551,8 @@
                             decoder.decode(parmArray, buffer, 0);
                             ProcessRawAudio(audio, buffer);
                             DrawWave(graph, fps, buffer)
-                        }
-                        else
+                        } 
+                        else 
                         {
                             var bufferUint16 = new Uint16Array(data);
 
@@ -563,21 +563,21 @@
                             ProcessRawAudio(audio, buffer);
                             DrawWave(graph, fps, buffer)
                         }
-                    }
-                    else
+                    } 
+                    else 
                     {
                         Print("Message is received..." + data + "</br>");
                     }
                 };
 
-                ws.onclose = function()
+                ws.onclose = function() 
                 {
                     Print("Connection is closed...</br>");
                 };
-
+                
                 return ws;
-            }
-            else
+            } 
+            else 
             {
                 Print("WebSocket NOT supported by your Browser!</br>");
             }
@@ -585,57 +585,67 @@
 
         function AudioOut(ws)
         {
-            var bufferSize = 4096;
             var audioContext;
-            try
+            try 
             {
                 window.AudioContext = window.AudioContext || window.webkitAudioContext;
                 audioContext = new AudioContext();
-            }
-            catch(e)
+            } 
+            catch(e) 
             {
                 alert('Web Audio API is not supported in this browser');
             }
             // Check if there is microphone input.
-            try
+            try 
             {
                 navigator.getUserMedia = navigator.getUserMedia ||
                                          navigator.webkitGetUserMedia ||
                                          navigator.mozGetUserMedia ||
                                          navigator.msGetUserMedia;
                 var hasMicrophoneInput = (navigator.getUserMedia || navigator.webkitGetUserMedia || navigator.mozGetUserMedia || navigator.msGetUserMedia);
-            }
-            catch(e)
+            } 
+            catch(e) 
             {
                 alert("getUserMedia() is not supported in your browser");
             }
 
             // Create a pcm processing "node" for the filter graph.
-            var bufferSize = 4096;
+            var bufferSize = 1024;
+            
+            var idx = 0;
+            var buf = 0;
+            var myarray = new Int16Array(160);
+            
             var myPCMProcessingNode = audioContext.createScriptProcessor(bufferSize, 1, 1);
-            myPCMProcessingNode.onaudioprocess = function(e)
+            myPCMProcessingNode.onaudioprocess = function(e) 
             {
                 var input = e.inputBuffer.getChannelData(0);
                 var output = e.outputBuffer.getChannelData(0);
 
-                //draw(input,  e.inputBuffer.sampleRate);
-
-                var array = new Int16Array(160);
-                for(var i=0;i<160;i++)
+                for(;;)
                 {
-                  array[i] = input[i];//16000*Math.sin(2*3.141592654*500.0*i/160.0)
+                    myarray[idx++] = 16000.0*input[Math.floor(buf)];
+                    if (idx==160)
+                    {
+                        ws.send(myarray);    
+                        idx = 0;
+                      }
+                    buf += 44100/8000;
+                    if (buf>1024)
+                    {
+                        buf -= 1024;
+                        break;
+                    }
                 }
-                ws.send(array);
             }
-
-
-            var errorCallback = function(e)
+                
+            var errorCallback = function(e) 
             {
                 alert("Error in getUserMedia: " + e);
-            };
-
+            };                  
+                
             // Get access to the microphone and start pumping data through the  graph.
-            navigator.getUserMedia({audio: true}, function(stream)
+            navigator.getUserMedia({audio: true}, function(stream) 
             {
                 var microphone = audioContext.createMediaStreamSource(stream);
                 microphone.connect(myPCMProcessingNode);
@@ -669,7 +679,7 @@
 
             //var source = f()
             var ws = WebSocketTest(r, ap);
-
+            
             AudioOut(ws);
 
             decoder.init_state(160);

@@ -1,0 +1,2 @@
+void adcSetup();
+short adcRead();

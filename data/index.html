@@ -1,0 +1,712 @@
+<!DOCTYPE html>
+
+<html>
+<head>
+    <meta http-equiv="Content-Type" content="text/html; charset=utf-8" />
+    <title>Neural network back prop, with matrix fomulation</title>
+    <style type="text/css">
+        < !-- body {
+            background-color: #ededed;
+            font: norm2al 12px/18px Arial, Helvetica, sans-serif;
+        }
+
+        h1 {
+            display: block;
+            width: 800px;
+            margin: 20px auto;
+            paddVing-bottom: 20px;
+            font: norm2al 24px/30px Georgia, "Times New Roman", Times, serif;
+            color: #333;
+            text-shadow: 1px 2px 3px #ccc;
+            border-bottom: 1px solid #cbcbcb;
+        }
+
+        #container {
+            width: 800px;
+            margin: 0 auto;
+        }
+
+        #myCanvas {
+            background: #fff;
+            border: 1px solid #cbcbcb;
+        }
+
+        #nav {
+            display: block;
+            width: 100%;
+            text-align: center;
+        }
+
+        #nav li {
+            display: block;
+            font-weight: bold;
+            line-height: 21px;
+            text-shadow: 1px 1px 1px #fff;
+            width: 100px;
+            height: 21px;
+            paddVing: 5px;
+            margin: 0 10px;
+            background: #e0e0e0;
+            border: 1px solid #ccc;
+            -moz-border-radius: 4px;
+            -webkit-border-radius: 4px;
+            border-radius: 4px;
+            float: left;
+        }
+
+        #nav li a {
+            color: #000;
+            display: block;
+            text-decoration: none;
+            width: 100%;
+            height: 100%;
+        }
+
+        -->
+    </style>
+
+    <script>
+        var compressed_audio = [
+            [0x29, 0x03, 0x24, 0x48, 0x4B, 0x50, 0x2B],
+            [0x5D, 0x07, 0x3C, 0x58, 0xC0, 0x6D, 0x2B],
+            [0x5F, 0x07, 0x3C, 0x91, 0x08, 0x6D, 0x2C],
+            [0x64, 0x07, 0x3C, 0x91, 0x04, 0x6D, 0x2D],
+            [0x66, 0x07, 0x3C, 0x98, 0x40, 0x6D, 0x2B],
+            [0x67, 0x07, 0x1C, 0x90, 0x04, 0x6D, 0x2C],
+            [0x72, 0x07, 0x3C, 0x98, 0x84, 0x65, 0x2C],
+            [0x79, 0x07, 0x3C, 0xD0, 0x90, 0x65, 0x2A],
+            [0x6D, 0x07, 0x1C, 0x90, 0x48, 0x66, 0x29],
+            [0x6B, 0x07, 0x3D, 0xCA, 0x8B, 0x5F, 0x28],
+            [0x6A, 0x07, 0x3D, 0x49, 0xC0, 0x5F, 0x28],
+            [0x69, 0x07, 0x3D, 0x49, 0x84, 0x5F, 0x28],
+            [0x6B, 0x0B, 0x01, 0x10, 0x04, 0x67, 0x29],
+            [0x67, 0x0B, 0x01, 0xD0, 0x4F, 0x6E, 0x2B],
+            [0x67, 0x0B, 0xE1, 0x10, 0x88, 0x6E, 0x2C],
+            [0x5D, 0x0B, 0x1D, 0x91, 0x4B, 0x6F, 0x2C],
+            [0x56, 0x0B, 0x1D, 0xD1, 0xC7, 0x6E, 0x2D],
+            [0x4E, 0x0B, 0x1D, 0x11, 0x88, 0x6E, 0x2E],
+            [0x45, 0x0B, 0x01, 0x10, 0x48, 0x6E, 0x2E],
+            [0x42, 0x07, 0x1C, 0x90, 0x8B, 0x6E, 0x2E],
+            [0x3B, 0x07, 0x21, 0xD0, 0x83, 0x66, 0x2C],
+            [0x37, 0x05, 0x1C, 0x88, 0x4B, 0x67, 0x2E],
+            [0x2B, 0x05, 0x1C, 0x88, 0x07, 0x50, 0x2D],
+        ];
+
+        var LINEAR_G_Q = false;
+        var ARCSIN_Q = true;
+        var FS = 8000.0 /* Sampling rate */
+        var FC = 200.0; /* Pitch analyzer filter cutoff */
+        var DOWN = 5; /* Decimation for pitch analyzer */
+        var MINPIT = 40.0; /* Minimum pitch (observed: 74) */
+        var MAXPIT = 320.0; /* Maximum pitch (observed: 250) */
+        var MINPER = Math.trunc(FS / (DOWN * MAXPIT) + .5); /* Minimum period  */
+        var MAXPER = Math.trunc(FS / (DOWN * MINPIT) + .5); /* Maximum period  */
+        var REAL_MINPER = (DOWN * MINPER); /* converted to samples units */
+        var WSCALE = 1.5863; /* Energy loss due to windowing */
+
+        function GetSignedChar(c) {
+            if (c >= 128)
+                c = c - 256;
+            return c;
+        }
+
+        class openlpc_decoder {
+            init_state(framelen) {
+                this.parambits = [6, 5, 5, 4, 4, 3, 3, 3, 3, 2];
+                this.LPC_FILTORDER = this.parambits.length
+
+                this.Oldk = []
+                this.bp = []
+
+                this.Oldper = 0.0;
+                this.OldG = 0.0;
+                for (var i = 0; i <= this.LPC_FILTORDER; i++) {
+                    this.Oldk[i] = 0.0;
+                    this.bp[i] = 0.0;
+                }
+
+                this.pitchctr = 0;
+                this.exc = 0.0;
+                this.logmaxminper = Math.log(MAXPER / MINPER);
+
+                var j = 0;
+                for (var i = 0; i < this.LPC_FILTORDER; i++) {
+                    j += this.parambits[i];
+                }
+                this.sizeofparm = (j + 7) / 8 + 2;
+
+                /* test for a valid frame len? */
+                this.framelen = framelen;
+                this.buflen = framelen * 3 / 2;
+            }
+
+            /* LPC Synthesis (decoding) */
+
+            decode(parm, buf, offset) {
+                var flen = this.framelen;
+                var f, u, newgain, Ginc, Newper, perinc;
+                var k = [],
+                    Newk = [],
+                    kinc = [];
+                var gainadj;
+                var hper = [];
+
+                var bp0 = this.bp[0];
+                var bp1 = this.bp[1];
+                var bp2 = this.bp[2];
+                var bp3 = this.bp[3];
+                var bp4 = this.bp[4];
+                var bp5 = this.bp[5];
+                var bp6 = this.bp[6];
+                var bp7 = this.bp[7];
+                var bp8 = this.bp[8];
+                var bp9 = this.bp[9];
+                var bp10 = this.bp[10];
+
+                var per = parm[0];
+
+                per = (per == 0 ? 0 : REAL_MINPER * Math.exp(per / (1 << 8) * this.logmaxminper));
+
+                hper[0] = hper[1] = per;
+
+                if ((parm[1] & 0x1) == 0) hper[0] = 0;
+                if ((parm[1] & 0x2) == 0) hper[1] = 0;
+
+                var gain;
+                if (LINEAR_G_Q) {
+                    gain = parm[1] / (1 << 7);
+                } else {
+                    gain = parm[1] / 256.0;
+                    gain = ((Math.exp(gain) - 1) / ((2.718 - 1.0) / 10));
+                }
+
+                k[0] = 0.0;
+
+                for (var i = this.LPC_FILTORDER - 1; i >= 0; i--) {
+                    var bitamount = this.parambits[i];
+                    var bitc8 = 8 - bitamount;
+                    /* casting to char should set the sign properly */
+                    var c = (parm[2] << bitc8) & 0xff;
+
+                    c = GetSignedChar(c);
+
+                    for (var j = 2; j < this.sizeofparm; j++)
+                        parm[j] = (((parm[j] >> bitamount) & 0xff) | ((parm[j + 1] << bitc8) & 0xff));
+
+                    k[i + 1] = (c / (1 << 7));
+                    if (ARCSIN_Q)
+                        if (i < 2) k[i + 1] = Math.sin(Math.PI / 2 * k[i + 1]);
+                }
+
+                /* k[] are the same in the two subframes */
+                for (var i = 1; i <= this.LPC_FILTORDER; i++) {
+                    Newk[i] = this.Oldk[i];
+                    kinc[i] = (k[i] - this.Oldk[i]) / flen;
+                }
+
+                /* Loop on two half frames */
+                var ii = 0;
+                for (var hframe = 0; hframe < 2; hframe++) {
+
+                    var Newper = this.Oldper;
+                    var newgain = this.OldG;
+
+                    var Ginc = (gain - this.OldG) / (flen / 2);
+                    var per = hper[hframe];
+
+                    if (per == 0.0) {
+                        /* if unvoiced */
+                        gainadj = /* 1.5874 * */ Math.sqrt(3.0 / this.buflen);
+                    } else {
+                        gainadj = Math.sqrt(per / this.buflen);
+                    }
+
+                    /* Interpolate period ONLY if both old and new subframes are voiced, gain and K always */
+                    if (this.Oldper != 0 && per != 0) {
+                        perinc = (per - this.Oldper) / (flen / 2);
+                    } else {
+                        perinc = 0.0;
+                        Newper = per;
+                    }
+
+                    if (Newper == 0.0) this.pitchctr = 0;
+
+                    for (var i = 0; i < flen / 2; i++, ii++) {
+                        var b, kj;
+                        if (Newper == 0.0) {
+                            var rnd = Math.random();
+                            u = ((rnd - 0.5) * newgain * gainadj);
+                        } else {
+                            /* voiced: send a delta every per samples */
+                            /* triangular excitation */
+                            if (this.pitchctr == 0) {
+                                this.exc = newgain * 0.25 * gainadj;
+                                this.pitchctr = Math.floor(Newper);
+                            } else {
+                                this.exc -= newgain / Newper * 0.5 * gainadj;
+                                this.pitchctr--;
+                            }
+                            u = this.exc;
+                        }
+                        var f = u;
+
+                        /* excitation */
+                        b = bp9;
+                        kj = Newk[10];
+                        f -= kj * bp9;
+                        bp10 = bp9 + kj * f;
+
+                        kj = Newk[9];
+                        f -= kj * bp8;
+                        bp9 = bp8 + kj * f;
+
+                        kj = Newk[8];
+                        f -= kj * bp7;
+                        bp8 = bp7 + kj * f;
+
+                        kj = Newk[7];
+                        f -= kj * bp6;
+                        bp7 = bp6 + kj * f;
+
+                        kj = Newk[6];
+                        f -= kj * bp5;
+                        bp6 = bp5 + kj * f;
+
+                        kj = Newk[5];
+                        f -= kj * bp4;
+                        bp5 = bp4 + kj * f;
+
+                        kj = Newk[4];
+                        f -= kj * bp3;
+                        bp4 = bp3 + kj * f;
+
+                        kj = Newk[3];
+                        f -= kj * bp2;
+                        bp3 = bp2 + kj * f;
+
+                        kj = Newk[2];
+                        f -= kj * bp1;
+                        bp2 = bp1 + kj * f;
+
+                        kj = Newk[1];
+                        f -= kj * bp0;
+                        bp1 = bp0 + kj * f;
+
+                        bp0 = f;
+                        u = f;
+
+                        if (u < -0.9999) {
+                            u = -0.9999;
+                        } else if (u > 0.9999) {
+                            u = 0.9999;
+                        }
+
+                        buf[ii + offset] = u * 8; // *32767;//(short)lrintf(u * 32767.0);
+
+                        Newper += perinc;
+                        newgain += Ginc;
+
+                        for (var j = 1; j <= this.LPC_FILTORDER; j++) {
+                            Newk[j] += kinc[j];
+                        }
+                    }
+
+                    this.Oldper = per;
+                    this.OldG = gain;
+                }
+
+                this.bp[0] = bp0;
+                this.bp[1] = bp1;
+                this.bp[2] = bp2;
+                this.bp[3] = bp3;
+                this.bp[4] = bp4;
+                this.bp[5] = bp5;
+                this.bp[6] = bp6;
+                this.bp[7] = bp7;
+                this.bp[8] = bp8;
+                this.bp[9] = bp9;
+                this.bp[10] = bp10;
+
+                for (var j = 1; j <= this.LPC_FILTORDER; j++)
+                    this.Oldk[j] = k[j];
+
+                return flen;
+            }
+        }
+
+
+        class Graph {
+            SetElement(element) {
+                this.context = element.getContext('2d');
+            }
+
+            Clear() {
+                this.context.clearRect(0, 0, 800, 300);
+            }
+
+            map(x1, x2, x) {
+                return (x - x1) / (x2 - x1);
+            }
+
+            interpol(a, b, t) {
+                return (1 - t) * a + (t) * b;
+            }
+
+            AxisX(x1, x2, step) {
+                this.x1 = x1;
+                this.x2 = x2;
+                this.stepX = step;
+            }
+
+            AxisY(y1, y2) {
+                this.y1 = y1;
+                this.y2 = y2;
+            }
+
+            ToViewportX(x) {
+                var t = this.map(this.x1, this.x2, x)
+                return this.interpol(0, 800, t);
+            }
+
+            ToViewportY(y) {
+                var t = this.map(this.y1, this.y2, y)
+                return this.interpol(0, 300, t);
+            }
+
+            MoveTo(x, y) {
+                x = this.ToViewportX(x);
+                y = this.ToViewportY(y);
+                this.context.moveTo(x, y);
+            }
+
+            LineTo(x, y) {
+                x = this.ToViewportX(x);
+                y = this.ToViewportY(y);
+                this.context.lineTo(x, y);
+            }
+
+            Line(x1, y1, x2, y2) {
+                this.MoveTo(x1, y1);
+                this.LineTo(x2, y2);
+            }
+
+            Print(x, y, str) {
+                x = this.ToViewportX(x);
+                y = this.ToViewportY(y);
+                this.context.fillText(str, x, y);
+            }
+
+            DrawAxis() {
+                this.context.beginPath();
+                this.context.strokeStyle = "#000000";
+                this.Line(this.x1, 0, this.x2, 0);
+                this.Line(0, this.y1, 0, this.y2);
+
+                for (var i = 0; i < 160; i += this.stepX) {
+                    this.Line(i, 0, i, -.025);
+                    this.Print(i, -.05, i);
+                }
+                this.context.stroke();
+
+            }
+
+            DrawArray(a, color) {
+                this.context.beginPath();
+                this.context.strokeStyle = color;
+                this.MoveTo(0, a[0]);
+                for (var x = 1; x < a.length - 1; x++) {
+                    this.LineTo(x, a[x], x + 1, a[x + 1]);
+                }
+                this.context.stroke();
+            }
+        }
+
+        function Print(str) {
+            document.getElementById("text").innerHTML += str;
+        }
+
+        function DrawWave(graph, fps, bytes) {
+            graph.Clear()
+            graph.DrawAxis()
+            graph.Print(10, .5, "fps:" + fps);
+
+            r.context.beginPath();
+            graph.MoveTo(0, bytes[0])
+            for (var x = 1; x < bytes.length; x++) {
+                graph.LineTo(x, bytes[x])
+            }
+            r.context.stroke();
+        }
+
+        //-------------------------------------------------------------------
+
+        class AudioPro {
+            constructor() {
+
+                this.audioContext = new AudioContext();
+                var bufferSize = 4096
+
+                this.node = this.audioContext.createScriptProcessor(bufferSize, 1, 1);
+                this.node.onaudioprocess = this.callback;
+
+                this.node.auQueue = []
+                this.node.auOffset = 0;
+
+                this.node.connect(this.audioContext.destination);
+            }
+
+            callback(e) {
+                var output = e.outputBuffer.getChannelData(0);
+
+                if (this.auQueue.length == 0) {
+                    for (var i = 0; i < this.bufferSize; i++)
+                        output[i] = 0;
+                    return;
+                }
+
+                var q = this.auQueue[0];
+
+                for (var i = 0; i < this.bufferSize; i++) {
+                    var offset = Math.floor(this.auOffset / 6);
+                    this.auOffset++
+
+                        output[i] = q[offset];
+
+                    //done with input buffer, get next
+                    if (offset == q.length) {
+                        this.auQueue.shift();
+                        if (this.auQueue.length == 0) {
+                            //run out of buffers, fill with zeroes
+                            for (; i < this.bufferSize; i++)
+                                output[i] = 0;
+                            break;
+                        }
+
+                        //get next if we have more
+                        q = this.auQueue[0];
+                        this.auOffset = 0;
+                    }
+                }
+            }
+
+            Queue(buffer) {
+                this.node.auQueue.push(buffer.slice())
+            }
+        }
+
+        //-------------------------------------------------------------------
+
+        var rawbuf = []
+        var rawBlocks = 10;
+        var rawIndex = 0;
+
+        function ProcessRawAudio(audio, buffer) {
+            var offset = rawIndex * buffer.length
+
+            for (var i = 0; i < buffer.length; i++)
+                rawbuf[i + offset] = buffer[i];
+
+            rawIndex = (rawIndex + 1) % rawBlocks;
+
+            if (rawIndex == 0) {
+                audio.Queue(rawbuf);
+            }
+        }
+
+        var url = location.host;
+
+        function WebSocketTest(graph, audio)
+        {
+            if ("WebSocket" in window)
+            {
+                this.time = performance.now();
+                Print("WebSocket is supported by your Browser!</br>");
+
+                // Let us open a web socket
+                var ws = new WebSocket("wss://" + url + "/wsesp8266/ws");
+                ws.binaryType = "arraybuffer"
+                ws.onopen = function()
+                {
+                    // Web Socket is connected, send data using send()
+                    ws.send("Message to send");
+                    Print("opened</br>");
+                };
+
+                ws.onmessage = function(evt)
+                {
+                    //ws.send(".");
+
+                    var time = performance.now();
+                    fps = (160 * 1000 / (time - this.time))
+                    this.time = time;
+
+                    var data = evt.data;
+                    if (data instanceof ArrayBuffer)
+                    {
+                        if (data.byteLength == 7)
+                        {
+                            var buffer = []
+                            var parmArray = new Uint8Array(data);
+
+                            decoder.decode(parmArray, buffer, 0);
+                            ProcessRawAudio(audio, buffer);
+                            DrawWave(graph, fps, buffer)
+                        }
+                        else
+                        {
+                            var bufferUint16 = new Uint16Array(data);
+
+                            var buffer = [];
+                            for (var i = 0; i < bufferUint16.length; i++)
+                                buffer[i] = (bufferUint16[i] / 2048) - 1;
+
+                            ProcessRawAudio(audio, buffer);
+                            DrawWave(graph, fps, buffer)
+                        }
+                    }
+                    else
+                    {
+                        Print("Message is received..." + data + "</br>");
+                    }
+                };
+
+                ws.onclose = function()
+                {
+                    Print("Connection is closed...</br>");
+                };
+
+                return ws;
+            }
+            else
+            {
+                Print("WebSocket NOT supported by your Browser!</br>");
+            }
+        }
+
+        function AudioOut(ws)
+        {
+            var bufferSize = 4096;
+            var audioContext;
+            try
+            {
+                window.AudioContext = window.AudioContext || window.webkitAudioContext;
+                audioContext = new AudioContext();
+            }
+            catch(e)
+            {
+                alert('Web Audio API is not supported in this browser');
+            }
+            // Check if there is microphone input.
+            try
+            {
+                navigator.getUserMedia = navigator.getUserMedia ||
+                                         navigator.webkitGetUserMedia ||
+                                         navigator.mozGetUserMedia ||
+                                         navigator.msGetUserMedia;
+                var hasMicrophoneInput = (navigator.getUserMedia || navigator.webkitGetUserMedia || navigator.mozGetUserMedia || navigator.msGetUserMedia);
+            }
+            catch(e)
+            {
+                alert("getUserMedia() is not supported in your browser");
+            }
+
+            // Create a pcm processing "node" for the filter graph.
+            var bufferSize = 4096;
+            var myPCMProcessingNode = audioContext.createScriptProcessor(bufferSize, 1, 1);
+            myPCMProcessingNode.onaudioprocess = function(e)
+            {
+                var input = e.inputBuffer.getChannelData(0);
+                var output = e.outputBuffer.getChannelData(0);
+
+                //draw(input,  e.inputBuffer.sampleRate);
+
+                var array = new Int16Array(160);
+                for(var i=0;i<160;i++)
+                {
+                  array[i] = input[i];//16000*Math.sin(2*3.141592654*500.0*i/160.0)
+                }
+                ws.send(array);
+            }
+
+
+            var errorCallback = function(e)
+            {
+                alert("Error in getUserMedia: " + e);
+            };
+
+            // Get access to the microphone and start pumping data through the  graph.
+            navigator.getUserMedia({audio: true}, function(stream)
+            {
+                var microphone = audioContext.createMediaStreamSource(stream);
+                microphone.connect(myPCMProcessingNode);
+                myPCMProcessingNode.connect(audioContext.destination);
+            }, errorCallback);
+        }
+
+
+        function compressionCheckBox(cb) {
+            var xhttp = new XMLHttpRequest();
+            xhttp.open("GET", "http://" + url + "/mode.html?cmd=" + (cb.checked ? "plc" : "raw"), true);
+            xhttp.send();
+        }
+
+        var decoder = new openlpc_decoder()
+
+        function init() {
+            var myCanvas = document.getElementById("myCanvas");
+
+            r = new Graph("myCanvas");
+            r.SetElement(myCanvas);
+            r.AxisX(0, 160, 16);
+            r.AxisY(-1, 1, 1);
+            r.DrawAxis()
+
+            r.context.beginPath();
+            r.Line(0.5, 0.5, 1, 1)
+            r.context.stroke();
+
+            var ap = new AudioPro()
+
+            //var source = f()
+            var ws = WebSocketTest(r, ap);
+
+            AudioOut(ws);
+
+            decoder.init_state(160);
+
+            var buf = []
+
+            //DrawWave(r, 0, buf)
+
+
+            var chunkSize = 4;
+
+            for (var i = 0; i < compressed_audio.length; i++) {
+                var chunk = (i % chunkSize);
+                var parmArray = new Uint8Array(compressed_audio[i]);
+                decoder.decode(parmArray, buf, chunk * 160);
+
+                if (chunk == chunkSize - 1) {
+                    ap.Queue(buf)
+                }
+            }
+            Print("Audio queued<br/>");
+
+        }
+    </script>
+</head>
+
+<body onload="init()">
+    <h1>ESP8266 audio link</h1>
+    <div id="container">
+        <label><input type='checkbox' onclick='compressionCheckBox(this);'>compression</label>
+        <canvas id="myCanvas" width="800" height="300"></canvas>
+        <div id="text"></div>
+        <br/><br/><br/><br/>
+        <h2>Contact/Questions:</h2> &lt;my_github_account_username&gt;@gmail.com.
+        <br/>
+        <br/>
+    </div>
+</body>
+
+</html>

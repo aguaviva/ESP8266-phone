@@ -6,6 +6,7 @@
 #include <math.h>
 #include "AudioOut.h"
 
+
 //---------------------------------------------------------------
 static int init_cnt = 0;
 
@@ -31,22 +32,10 @@ void aoEnd()
 
 int16_t aoQueue(int16_t *data, int len)
 {
-    /*
-    int16_t b=i2s_available();
-
-    len = (len<b)?len:b;
-
-    for(int i=0;i<len;i++)
-    {
-        short v = data[i];
-        uint32_t s32 = (v<<16) | (v & 0xffff);
-        i2s_write_sample(s32);
-    }
-    */
     return i2s_write_buffer_mono(data, len);
 }
 
-void PlaySin(int samplingRata)
+void PlaySin()
 {
     //Serial.printf("PlaySin");
 
@@ -85,54 +74,52 @@ void PlaySin(int samplingRata)
     aoEnd();
 }
 
+int my_write_buffer_mono(short *data, int len)
+{
+    int16_t b=i2s_available();
+    len = len<b?len:b;
 
-void PlayAudio(int samplingRata)
+    for(int i=0;i<len;i++)
+    {
+        signed short v = data[i] ;
+        uint32_t s32 = (v<<16) | (v & 0xffff);
+        i2s_write_sample(s32);
+    }
+
+    return len;
+}
+
+void PlayHolaRaw()
 {
     fs::File f = SPIFFS.open("/hola.raw", "r");
+    signed short data[1000];
 
     aoBegin(8000);
-
-    signed short data[1000];
-    int size = f.readBytes((char*)data, 1000*2)/2;
-
-    for(int i=0;;)
+    for(;;)
     {
-        int16_t b=i2s_available();
-        if (b>0)
-        {
-            b=i+b;
+        int size = f.readBytes((char*)data, 1000*2)/2;
+        if (size==0)
+            break;
 
-            if (b>size)
-                b = size;
-
-            for(;i<b;i++)
+            int written = 0;
+            while(written<size)
             {
-                signed short v = data[i] ;
-                uint32_t s32 = (v<<16) | (v & 0xffff);
-                i2s_write_sample(s32);
+                int to_write = size-written;
+                int just_written = my_write_buffer_mono(&data[written], to_write);
+                if (just_written<to_write)
+                {
+                    ESP.wdtFeed();
+                }
+                written += just_written;
             }
+     }
 
-            if (i==size)
-            {
-                i=0;
-                size = f.readBytes((char*)data, 1000*2)/2;
-                if (size==0)
-                    break;
-                ESP.wdtFeed();
-            }
-        }
-        else
-        {
-            //delay((64*1000)/8000);
-            ESP.wdtFeed();
-        }
-    }
     aoEnd();
     f.close();
 }
 
 
-void PlayAudio2()
+void PlayHolaRawBuf()
 {
     fs::File f = SPIFFS.open("/hola.raw", "r");
     signed short data[1000];
@@ -157,6 +144,44 @@ void PlayAudio2()
             written += just_written;
         }
     }
+
+    aoEnd();
+    f.close();
+}
+
+void PlayHolaLPC(openlpc_decoder_state *st)
+{
+    fs::File f = SPIFFS.open("/hola.lpc", "r");
+
+    unsigned char params[OPENLPC_ENCODED_FRAME_SIZE];
+    signed short data[160];
+
+    aoBegin(8000);
+
+    for(;;)
+    {
+        //read coeffs
+        int size = f.readBytes((char*)params, OPENLPC_ENCODED_FRAME_SIZE);
+        if (size==0)
+            break;
+
+        //decode
+        openlpc_decode(params, data, st);
+        size = 160;
+
+        int written = 0;
+        while(written<size)
+        {
+            int to_write = size-written;
+            int just_written = i2s_write_buffer_mono(&data[written], to_write);
+            if (just_written<to_write)
+            {
+                ESP.wdtFeed();
+            }
+            written += just_written;
+        }
+    }
+
     aoEnd();
     f.close();
 }

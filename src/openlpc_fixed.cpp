@@ -552,7 +552,6 @@ openlpc_encoder_state *create_openlpc_encoder_state(void)
     state = (openlpc_encoder_state *)malloc(sizeof(openlpc_encoder_state));
 
     return state;
-
 }
 
 
@@ -615,6 +614,8 @@ int openlpc_encode(const short *buf, unsigned char *parm, openlpc_encoder_state 
     yv30 = st->yv3[0];
     yv31 = st->yv3[1];
     yv32 = st->yv3[2];
+
+
     /* convert short data in buf[] to signed lin. data in s[] and prefilter */
     for (i=0, j=st->buflen - st->framelen; i < st->framelen; i++, j++) {
 
@@ -661,6 +662,7 @@ int openlpc_encode(const short *buf, unsigned char *parm, openlpc_encoder_state 
 #endif
         st->y[j] = yv32;
     }
+//#if 0//raul
     st->xv1[0] = xv10;
     st->xv1[1] = xv11;
     st->xv1[2] = xv12;
@@ -671,6 +673,7 @@ int openlpc_encode(const short *buf, unsigned char *parm, openlpc_encoder_state 
     st->yv3[0] = yv30;
     st->yv3[1] = yv31;
     st->yv3[2] = yv32;
+
 #ifdef PREEMPH
     /* operate optional preemphasis s[] -> s[] on the newly arrived frame */
     xv20 = st->xv2[0];
@@ -681,6 +684,8 @@ int openlpc_encode(const short *buf, unsigned char *parm, openlpc_encoder_state 
     xv41 = st->xv4[1];
     yv40 = st->yv4[0];
     yv41 = st->yv4[1];
+
+
     for (j=st->buflen - st->framelen; j < st->buflen; j++) {
         fixed32 u = st->s[j];
 
@@ -722,6 +727,7 @@ int openlpc_encode(const short *buf, unsigned char *parm, openlpc_encoder_state 
 
         st->s[j] = u;
     }
+
     st->xv2[0] = xv20;
     st->xv2[1] = xv21;
     st->yv2[0] = yv20;
@@ -911,7 +917,7 @@ int openlpc_decode(unsigned char *parm, short *buf, openlpc_decoder_state *st)
         int bitamount = parambits[i];
         int bitc8 = 8-bitamount;
         /* casting to char should set the sign properly */
-        char c = (char)(parm[2] << bitc8);
+        signed char c = (signed char)(parm[2] << bitc8);
 
         for(j=2; j<sizeofparm; j++)
             parm[j] = (unsigned char)((parm[j] >> bitamount) | (parm[j+1] << bitc8));
@@ -971,6 +977,7 @@ int openlpc_decode(unsigned char *parm, short *buf, openlpc_decoder_state *st)
                 }
                 u = st->exc;
             }
+
             /* excitation */
             kj = Newk[10];
             u -= fixmul32(kj, bp9);
@@ -1023,6 +1030,7 @@ int openlpc_decode(unsigned char *parm, short *buf, openlpc_decoder_state *st)
 
             Newper += perinc;
             NewG += Ginc;
+
             for (j=1; j <= LPC_FILTORDER; j++) Newk[j] += kinc[j];
 
         }

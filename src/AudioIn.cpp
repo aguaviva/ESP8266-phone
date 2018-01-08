@@ -2,7 +2,7 @@
 #include <Arduino.h>
 #include "AudioIn.h"
 
-static short buffer[4][160];
+static short buffer[4][AUDIO_IN_FRAMESIZE];
 volatile static int bufPos = 0;
 volatile static int bufLen = 0;
 
@@ -51,23 +51,23 @@ volatile static int dataPos = 0;
 
 void Put(short value)
 {
-  if (currBuffer==NULL)
-  {
-      currBuffer = GetNewBuffer();
-      if (currBuffer==NULL)
-      {
-        return;
-      }
-  }
+    if (currBuffer==NULL)
+    {
+        currBuffer = GetNewBuffer();
+        if (currBuffer==NULL)
+        {
+            return;
+        }
+    }
 
-  currBuffer[dataPos++] = value;
+    currBuffer[dataPos++] = value;
 
 	// If the buffer is full, signal it's ready to be sent and switch to the other one
-	if (dataPos >= 160)
-  {
-		dataPos = 0;
-    currBuffer = GetNewBuffer();
-	}
+    if (dataPos >= AUDIO_IN_FRAMESIZE)
+    {
+        dataPos = 0;
+        currBuffer = GetNewBuffer();
+    }
 }
 
 void BufferDebug()

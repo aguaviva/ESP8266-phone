@@ -17,6 +17,8 @@
 
 #include <i2s.h>
 
+#define MY_OPENLPC_FRAMESIZE 160
+
 
 #define OTA
 #define HOST_NAME "esp-audio-link"
@@ -33,7 +35,8 @@ DNSServer dns;
 bool AudioIsRaw = true;
 
 
-static openlpc_encoder_state *encoder_st=NULL;
+openlpc_encoder_state *encoder_st=NULL;
+openlpc_decoder_state *decoder_st=NULL;
 
 short ReadMic()
 {
@@ -79,7 +82,7 @@ void onWsEvent(AsyncWebSocket * server, AsyncWebSocketClient * client, AwsEventT
     {
         if(info->opcode == WS_BINARY)
         {
-            int16_t av = i2s_available();
+            //int16_t av = i2s_available();
 
             int16_t written = aoQueue((short *)data, len/2);
             ESP.wdtFeed();
@@ -92,17 +95,47 @@ void onWsEvent(AsyncWebSocket * server, AsyncWebSocketClient * client, AwsEventT
 void setup()
 {
   Serial.begin(115200);
+  Serial.println();
 
   // Wait for connection
   AsyncWiFiManager wifiManager(&server,&dns);
   wifiManager.autoConnect("AutoConnectAP");
 
   //Send OTA events to the browser
+  //
   #ifdef OTA
     ArduinoOTA.setHostname(HOST_NAME);
     ArduinoOTA.begin();
     Serial.printf("HTTPUpdateServer ready! Open http://%s.local/update in your browser\n", HOST_NAME);
   #endif
+
+  // init encoder
+  Serial.print("Starting encoder...");
+  encoder_st = create_openlpc_encoder_state();
+  if (encoder_st!=NULL)
+  {
+      init_openlpc_encoder_state(encoder_st, MY_OPENLPC_FRAMESIZE);
+      Serial.println("OK");
+  }
+  else
+  {
+      Serial.println("Error");
+  }
+
+  // init decoder
+  //
+  Serial.print("Starting decoder...");
+  decoder_st = create_openlpc_decoder_state();
+  if (decoder_st!=NULL)
+  {
+      init_openlpc_decoder_state(decoder_st, MY_OPENLPC_FRAMESIZE);
+      Serial.println("OK");
+  }
+  else
+  {
+      Serial.println("Error");
+  }
+
 
   // Start MSDN
   //
@@ -120,11 +153,6 @@ void setup()
       server.serveStatic("/", SPIFFS, "/").setDefaultFile("index.html");
       Serial.println ( "SPIFFS started" );
   }
-
-  encoder_st = create_openlpc_encoder_state();
-  init_openlpc_encoder_state(encoder_st, 160);
-  Serial.println("Starting encoder");
-
 
   ws.onEvent(onWsEvent);
   server.addHandler(&ws);
@@ -161,50 +189,91 @@ void setup()
 
   server.on("/playSin", HTTP_GET, [](AsyncWebServerRequest *request)
   {
-      PlaySin(8000);
+      PlaySin();
       request->send(200, "text/plain", "ok");
   });
 
-  server.on("/playHola", HTTP_GET, [](AsyncWebServerRequest *request)
+  server.on("/playHolaRaw", HTTP_GET, [](AsyncWebServerRequest *request)
   {
-      PlayAudio(8000);
+      PlayHolaRaw();
       request->send(200, "text/plain", "ok");
   });
 
-  server.on("/encoded.bin", HTTP_GET, [](AsyncWebServerRequest *request)
+  server.on("/playHolaRawBuf", HTTP_GET, [](AsyncWebServerRequest *request)
   {
-      //Serial.printf("compressing hola.raw and sending it..\n");
-      openlpc_encoder_state *st = create_openlpc_encoder_state();
-      if (st==NULL)
-      {
-        request->send(200,"cant create openlpc_encoder_state");
-        return;
-      }
-      init_openlpc_encoder_state(st, 160);
+      PlayHolaRawBuf();
+      request->send(200, "text/plain", "ok");
+  });
+
+  server.on("/playHolaLPC", HTTP_GET, [](AsyncWebServerRequest *request)
+  {
+      PlayHolaLPC(decoder_st);
+      request->send(200, "text/plain", "ok");
+  });
+
+
+  server.on("/encoded.lpc", HTTP_GET, [](AsyncWebServerRequest *request)
+  {
+      Serial.printf("compressing hola.raw and sending it..\n");
 
       fs::File f = SPIFFS.open("/hola.raw", "r");
 
-      //Serial.printf("opened:%i bytes\n",f.size());
+      Serial.printf("opened:%i bytes\n",f.size());
 
-      unsigned char params[7*100];
+      unsigned char params[OPENLPC_ENCODED_FRAME_SIZE*400];
 
       int i=0;
-      for(;;i+=7)
+      for(;;i+=OPENLPC_ENCODED_FRAME_SIZE)
       {
-        short data[160];
-        int size = f.readBytes((char*)data, 160*2);
+        short data[MY_OPENLPC_FRAMESIZE];
+        int size = f.readBytes((char*)data, MY_OPENLPC_FRAMESIZE*2);
         ESP.wdtFeed();
-        if (size<160)
+        if (size<MY_OPENLPC_FRAMESIZE*2)
           break;
 
-        openlpc_encode(data, &params[i], st);
+        Serial.printf("Encoded :%i \n",i);
+
+        openlpc_encode(data, &params[i], encoder_st);
         ESP.wdtFeed();
       }
 
-      //destroy_openlpc_encoder_state(st);
       f.close();
       request->send_P(200, "application/octet-stream", params, i);
   });
+
+    server.on("/decoded.raw", HTTP_GET, [](AsyncWebServerRequest *request)
+    {
+        Serial.printf("decompressing hola.lpc and sending it..\n");
+
+        static fs::File f;
+
+        f = SPIFFS.open("/hola.lpc", "r");
+
+        request->send(request->beginChunkedResponse("application/octet-stream", [](uint8_t *buffer, size_t maxLen, size_t index) -> size_t
+        {
+            int frames = maxLen / (MY_OPENLPC_FRAMESIZE*2);
+
+            for(int i=0;i<frames;i++)
+            {
+                unsigned char params[OPENLPC_ENCODED_FRAME_SIZE];
+                int size = f.readBytes((char*)params, OPENLPC_ENCODED_FRAME_SIZE);
+                if (size<7)
+                {
+                    f.close();
+                    return 0;
+                }
+
+                short alignedbuffer[MY_OPENLPC_FRAMESIZE];
+                openlpc_decode(params, alignedbuffer, decoder_st);
+                memcpy(&buffer[i*MY_OPENLPC_FRAMESIZE*2], alignedbuffer, MY_OPENLPC_FRAMESIZE*2);
+
+                ESP.wdtFeed();
+            }
+
+            return frames * (MY_OPENLPC_FRAMESIZE*2);
+        }));
+    });
+
 
   server.onNotFound([](AsyncWebServerRequest *request)
   {
@@ -229,9 +298,7 @@ void setup()
 
   //Serial.flush();
   delay(100);
-  Serial.end();
-
-  PlayAudio2();
+  //Serial.end();
 
 }
 
@@ -244,13 +311,13 @@ void loop()
      {
         if (AudioIsRaw==false)
         {
-          unsigned char params[7];
+          unsigned char params[OPENLPC_ENCODED_FRAME_SIZE];
           openlpc_encode(data, params, encoder_st);
-          ws.binaryAll((char*)params,7);
+          ws.binaryAll((char*)params,OPENLPC_ENCODED_FRAME_SIZE);
         }
         else
         {
-          ws.binaryAll((char*)data,160*2);
+          ws.binaryAll((char*)data, MY_OPENLPC_FRAMESIZE);
         }
         aiUnlock();
 

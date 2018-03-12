@@ -1,6 +1,7 @@
 package com.example.aguaviva.myphone;
 
 import java.io.IOException;
+import java.net.Inet4Address;
 import java.net.InetAddress;
 import java.net.InetSocketAddress;
 import java.net.NetworkInterface;
@@ -55,7 +56,7 @@ public class Connect extends Thread {
                 while (enumInetAddress.hasMoreElements()) {
                     InetAddress inetAddress = enumInetAddress.nextElement();
 
-                    if (inetAddress.isSiteLocalAddress()) {
+                    if (!inetAddress.isLoopbackAddress() && inetAddress instanceof Inet4Address) {
                         return inetAddress;
                     }
                 }
@@ -137,8 +138,6 @@ public class Connect extends Thread {
             activity.AddMsg("listening at "+ GetMyIP().getHostAddress()+":"+port+"\n");
             serverSocket = new ServerSocket(port);
             Socket socket = serverSocket.accept();
-            serverSocket.close();
-            serverSocket=null;
             socket.setSoTimeout(1000);
             return socket;
         } catch (IOException e) {
@@ -180,6 +179,7 @@ public class Connect extends Thread {
         {
             if (state == State.waitingForCall) {
                 socket = Listen();
+                continue;
             } else if (state == State.tryingToConnect) {
                 socket = Connect();
             }

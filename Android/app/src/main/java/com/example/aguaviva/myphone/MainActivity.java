@@ -1,6 +1,8 @@
 package com.example.aguaviva.myphone;
 
 import android.app.Activity;
+import android.content.Context;
+import android.content.SharedPreferences;
 import android.graphics.Canvas;
 import android.graphics.Color;
 import android.graphics.Paint;
@@ -41,6 +43,8 @@ public class MainActivity extends Activity {
         checkBoxPlay = (CheckBox) findViewById(R.id.checkBoxPlay);
         checkBoxRec = (CheckBox) findViewById(R.id.checkBoxRec);
 
+        SharedPreferences sharedPref = super.getPreferences(Context.MODE_PRIVATE);
+        url.setText(sharedPref.getString(getString(R.string.url), "<host>:9999"));
 
         connect = new Connect(this);
 
@@ -76,6 +80,15 @@ public class MainActivity extends Activity {
     public void OnConnect(boolean _bIsConnected)
     {
         final boolean bIsConnected = _bIsConnected;
+
+        if (_bIsConnected)
+        {
+            SharedPreferences sharedPref = super.getPreferences(Context.MODE_PRIVATE);
+            SharedPreferences.Editor editor = sharedPref.edit();
+            editor.putString(getString(R.string.url), url.getText().toString());
+            editor.commit();
+        }
+
         runOnUiThread(new Runnable() {
             @Override
             public void run() {
@@ -84,6 +97,7 @@ public class MainActivity extends Activity {
                     button.setText("Disconnect");
                     checkBoxPlay.setEnabled(false);
                     checkBoxRec.setEnabled(false);
+
                 }
                 else
                 {
